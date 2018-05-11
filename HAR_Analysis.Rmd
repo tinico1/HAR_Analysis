@@ -1,0 +1,249 @@
+---
+title: "Prediction HRA"
+author: "Agustin Pacheco Bonrostro"
+date: "9 de mayo de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: 
+[HAR Project](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)
+
+
+## Project Objetive
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test case
+
+
+We will have two datasets. 
+[Training Dataset](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+[Testing Dataset](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+
+## Necessary Libraries
+
+The following libraries will be necessary to perform the  analysis
+```{r library, message=FALSE, warning=FALSE}
+library (caret)
+library(rattle)
+library(randomForest)
+library(rpart)
+library (BBmisc)
+library(pROC)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+```
+
+
+Let's initialize somme values
+```{r initizalize}
+nwd <- "F:\\Coursera\\R\\wd"
+fileURLTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileNameTrain <- "pml-trainning.csv"
+fileURLTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+fileNameTest <- "pml-testing.csv"
+
+
+seedval <- 34243
+```
+
+
+## Auxiliary Function
+Somme auxiliary funtions will help us
+
+### getIndex
+
+```{r}
+getIndex <- function(df, pct) {
+        ### Obtain the index of the columns with % of Non NA greather than PCT
+        ncol <- dim(df)[2]
+        nrow  <- dim(df)[1]
+        
+        ind<-1
+        
+        indices <- array()
+        ## For all columns 
+        for(i in 1: ncol) {
+                col <- df[, i]
+                numNA <- sum(is.na(col))
+                ## if % of NA is greather than pct include i in indices array
+                if ( (numNA/nrow) * 100 < pct) {
+                        indices[ind] <- i
+                        ind <- ind + 1
+                }
+        }  
+        
+        ## Return indices array
+        indices
+}
+```
+
+### readDataset
+```{r}
+##
+readDataSet <- function( nameDir, fileName, fileURL ) {
+        
+        ## Obtain original work directory
+        owd <- getwd()
+        ## If not exists the directory, create
+        if(!file.exists(nameDir)){
+                dir.create(nameDir)
+        }
+        setwd(nameDir)
+        
+        
+        ## If the file dont exists...
+        if(!file.exists(fileName)){
+                ## Download the file
+                download.file(fileURL,destfile=fileName,method="curl")
+        }    
+        
+        ## Read CSV file
+        dataF <- read.csv(fileName, header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
+        
+        ## Return to initial work directory
+        setwd(owd)
+        dataF
+}
+```
+
+
+### plotConfusion 
+
+```{r}
+plotConfusion <- function(conf) {
+        
+        
+        df <- normalize(as.data.frame(conf$table))
+        plot <- ggplot(df)
+        plot + geom_tile(aes(x=Prediction, y=Reference, fill=Freq)) + 
+                scale_x_discrete(name="Actual Class") + 
+                scale_y_discrete(name="Predicted Class") + 
+            ##    scale_fill_gradient(breaks=seq(from=-.3, to=3, by=.2)) + 
+                labs(fill="Normalized\nFrequency")
+        
+        
+      print(plot)       
+        
+}
+```
+
+## Analysis
+
+### Initialize Seed and Download Data Sets
+```{r}
+## Read train and test Data Sets
+set.seed(seedval)
+trainnig <- readDataSet(nwd, fileNameTrain, fileURLTrain )
+testing <- readDataSet(nwd, fileNameTest, fileURLTest )
+
+## The first 7 columns are not useful for analysis
+trainnig <- trainnig[, -c(1:7)]
+testing <- testing[, -c(1:7)]
+## Obtain the index of the columns with useful data
+indices <- getIndex(trainnig, 60)
+
+## We will use this columns 
+trainnig <- trainnig[, indices]
+testing <- testing[, indices]
+```
+
+The testing dataset has not the classe column. We will use this data set to predict the  classe value, as final step
+
+
+## Create the analisys Data Sets
+
+```{r}
+inTrain <- createDataPartition(trainnig$classe, p=.7, list=FALSE)
+trainD.train <- trainnig[inTrain,]
+trainD.test  <- trainnig[-inTrain,]
+```
+
+
+
+## Decision Tree
+
+Our first model will be a decission Tree
+
+```{r pressure}
+dt.model <- train(classe ~ ., data=trainD.train, method="rpart2")
+
+fancyRpartPlot(dt.model$finalModel)
+dt.classe <- predict(dt.model, newdata = trainD.test)
+
+dt.conf <- confusionMatrix( trainD.test$classe, dt.classe)
+dt.conf
+```
+
+
+## Random Forest 
+```{r}
+rf.model <- randomForest(classe ~ ., data=trainD.train, ntree=50, norm.votes=FALSE)
+rf.classe <- predict(rf.model, newdata = trainD.test, method ="class")
+
+rf.conf <- confusionMatrix( trainD.test$classe, rf.classe)
+rf.conf
+```
+
+## Compare the Models
+
+```{r}
+### Compare the two models
+dt.probs <- predict(dt.model, trainD.test,type="prob")
+
+
+dt.ROC <- multiclass.roc(predictor=dt.probs$A,
+               response=trainD.test$classe, levels = c("A", "B", "C", "D", "E"))
+
+rf.probs <- as.data.frame(predict(rf.model, trainD.test, type= "prob"))
+
+
+rf.ROC <- multiclass.roc(predictor=rf.probs$A,
+              response=trainD.test$classe, levels = c("A", "B", "C", "D", "E"))
+
+rf.ROC$auc; rf.conf
+
+dt.ROC$auc; dt.conf
+```
+The values for Random Forest are better than Decission Tree model
+
+The prediction for the test data set are...
+```{r}
+final.pred <- predict(rf.model, testing)
+final.pred
+```
+
+## Plots
+
+```{r}
+par(mfrow = c(2,1))
+ df <- normalize(as.data.frame(dt.conf$table))
+        plot1 <- ggplot(df)
+        plot1 <- plot1 + geom_tile(aes(x=Prediction, y=Reference, fill=Freq)) + 
+                scale_x_discrete(name="Actual Class") + 
+                scale_y_discrete(name="Predicted Class") + 
+            ##    scale_fill_gradient(breaks=seq(from=-.3, to=3, by=.2)) + 
+                labs(fill="Normalized\nFrequency")
+        
+ df <- normalize(as.data.frame(rf.conf$table))
+        plot2 <- ggplot(df)
+        plot2<- plot2 + geom_tile(aes(x=Prediction, y=Reference, fill=Freq)) + 
+                scale_x_discrete(name="Actual Class") + 
+                scale_y_discrete(name="Predicted Class") + 
+            ##    scale_fill_gradient(breaks=seq(from=-.3, to=3, by=.2)) + 
+                labs(fill="Normalized\nFrequency")       
+grid.arrange(plot1, plot2, nrow = 1)
+        
+```
+
+## References
+
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+Cited by 2 (Google Scholar)
